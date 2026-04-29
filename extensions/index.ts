@@ -139,7 +139,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
       },
       { additionalProperties: false },
     ),
-    execute: (_id, params, onUpdate, _ctx, signal) =>
+    execute: (_id, params, signal, onUpdate, _ctx) =>
       runTool(
         "web_search",
         params,
@@ -165,7 +165,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
       },
       { additionalProperties: false },
     ),
-    execute: (_id, params, onUpdate, _ctx, signal) =>
+    execute: (_id, params, signal, onUpdate, _ctx) =>
       runTool(
         "understand_image",
         params,
