@@ -13,7 +13,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { MiniMaxMcpClient } from "../dist/client.js";
 import { loadConfig, mergeConfig, redactConfig, validateConfig } from "../dist/config.js";
-import { formatToolOutput } from "../dist/utils.js";
+import { formatToolOutput, formatWebSearchOutput } from "../dist/utils.js";
 import type { MiniMaxMcpConfig } from "../dist/types.js";
 
 const FLAGS = {
@@ -91,6 +91,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
     signal: AbortSignal | undefined,
     invoke: (client: MiniMaxMcpClient, signal?: AbortSignal) => Promise<import("../dist/types.js").McpToolResult>,
     pendingMessage: string,
+    format: typeof formatToolOutput = formatToolOutput,
   ) => {
     const config = resolveConfig();
     try {
@@ -108,7 +109,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
     const client = getClient(config);
     try {
       const result = await invoke(client, signal);
-      const formatted = formatToolOutput(result, {
+      const formatted = format(result, {
         maxBytes: config.maxBytes,
         maxLines: config.maxLines,
       });
@@ -151,6 +152,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
             sig,
           ),
         `Searching: "${params.query}"...`,
+        formatWebSearchOutput,
       ),
   });
 

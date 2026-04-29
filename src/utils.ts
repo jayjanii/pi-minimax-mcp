@@ -102,6 +102,43 @@ export function formatToolOutput(result: McpToolResult, options: FormatOptions =
   return truncateTail(extractText(result), options);
 }
 
+interface WebSearchOrganic {
+  title?: string;
+  link?: string;
+  snippet?: string;
+  date?: string;
+}
+
+/**
+ * Extract a compact markdown summary from a MiniMax web_search payload.
+ * Falls back to the raw text if the payload isn't the expected shape.
+ */
+export function extractWebSearchText(result: McpToolResult): string {
+  const raw = extractText(result);
+  let parsed: { organic?: WebSearchOrganic[] };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return raw;
+  }
+  const organic = Array.isArray(parsed.organic) ? parsed.organic : null;
+  if (!organic || organic.length === 0) return raw;
+  return organic
+    .map((r, i) => {
+      const title = r.title?.trim() || "(untitled)";
+      const link = r.link?.trim() ?? "";
+      const date = r.date?.trim();
+      const snippet = r.snippet?.trim().replace(/\s+/g, " ") ?? "";
+      const header = date ? `${i + 1}. ${title} — ${date}` : `${i + 1}. ${title}`;
+      return [header, link, snippet].filter(Boolean).join("\n   ");
+    })
+    .join("\n\n");
+}
+
+export function formatWebSearchOutput(result: McpToolResult, options: FormatOptions = {}): FormattedOutput {
+  return truncateTail(extractWebSearchText(result), options);
+}
+
 export function writeTempFile(content: string): string {
   const path = join(tmpdir(), `pi-minimax-mcp-${Date.now()}-${process.pid}.txt`);
   writeFileSync(path, content, "utf-8");
