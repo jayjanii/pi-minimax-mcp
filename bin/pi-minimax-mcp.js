@@ -1,163 +1,169 @@
 #!/usr/bin/env node
-/**
- * pi-minimax-mcp CLI
- *
- * Command-line interface for MiniMax MCP tools
- *
- * Usage:
- *   pi-minimax-mcp search "quantum computing latest"
- *   pi-minimax-mcp understand ./screenshot.png
- *   pi-minimax-mcp config        # Show current config
- *   pi-minimax-mcp init          # Create default config
- */
-
 import { MiniMaxMcpClient } from "../dist/client.js";
-import { loadConfig, mergeConfig, validateConfig, ensureDefaultConfig } from "../dist/config.js";
+import { ensureDefaultConfig, loadConfig, redactConfig, validateConfig } from "../dist/config.js";
 import { formatToolOutput } from "../dist/utils.js";
 
-const USAGE = `
-Usage: pi-minimax-mcp <command> [options]
+const USAGE = `Usage: pi-minimax-mcp <command> [options]
 
 Commands:
-  search <query>      Perform web search
-  understand <path>   Analyze image
-  config              Show current configuration
-  init                Create default config file
+  search <query>      Web search
+  understand <path>   Analyze image (path or URL)
+  tools               List tools exposed by the MiniMax MCP server
+  config              Show current configuration (redacted)
+  init                Create default config file (~/.pi/agent/extensions/minimax-mcp.json)
   --help, -h          Show this help
   --version, -v       Show version
 
-Environment Variables:
-  MINIMAX_API_KEY         Required. Get from https://platform.minimax.io/subscribe/coding-plan
-  MINIMAX_API_HOST        Optional. Default: https://api.minimax.io
-  MINIMAX_MCP_BASE_PATH   Optional. Local output directory
-  MINIMAX_API_RESOURCE_MODE  Optional. "url" or "local"
+Options:
+  --num-results N     Number of search results (1-10)
+  --recency-days N    Limit search to recent N days
+  --prompt "..."      Question to guide image analysis
+  --config <path>     Use specific config file
 
-Examples:
-  pi-minimax-mcp search "Rust async/await patterns"
-  pi-minimax-mcp search "OpenAI GPT-5 rumors" --num-results 10
-  pi-minimax-mcp understand ./error-screenshot.png
-  pi-minimax-mcp understand ./chart.png --prompt "What trends does this show?"
+Environment:
+  MINIMAX_API_KEY (required), MINIMAX_API_HOST, MINIMAX_MCP_BASE_PATH,
+  MINIMAX_API_RESOURCE_MODE (url|local), MINIMAX_MCP_TIMEOUT_MS,
+  MINIMAX_MCP_MAX_BYTES, MINIMAX_MCP_MAX_LINES
 `;
 
-function parseArgs() {
-  const args = process.argv.slice(2);
-  const command = args[0];
+const VERSION = "2.0.0";
+
+/**
+ * Minimal arg parser: collects --flag <value> pairs (booleans for trailing
+ * flags), the rest is positional. Supports --flag=value too.
+ */
+function parseArgs(argv) {
+  const command = argv[0];
   const options = {};
   const positional = [];
-
-  for (let i = 1; i < args.length; i++) {
-    const arg = args[i];
-    if (arg.startsWith("--")) {
-      const key = arg.slice(2).replace(/-/g, "");
-      const value = args[i + 1] && !args[i + 1].startsWith("--") ? args[++i] : "true";
-      options[key] = value;
-    } else {
+  for (let i = 1; i < argv.length; i++) {
+    const arg = argv[i];
+    if (!arg.startsWith("--")) {
       positional.push(arg);
+      continue;
     }
+    const eq = arg.indexOf("=");
+    let key, value;
+    if (eq !== -1) {
+      key = arg.slice(2, eq);
+      value = arg.slice(eq + 1);
+    } else {
+      key = arg.slice(2);
+      const next = argv[i + 1];
+      if (next != null && !next.startsWith("--")) {
+        value = next;
+        i++;
+      } else {
+        value = true;
+      }
+    }
+    options[key.replace(/-/g, "")] = value;
   }
-
   return { command, options, positional };
 }
 
+function intOpt(opts, ...names) {
+  for (const n of names) {
+    if (opts[n] != null && opts[n] !== true) {
+      const v = Number.parseInt(opts[n], 10);
+      if (Number.isFinite(v)) return v;
+    }
+  }
+  return undefined;
+}
+
 async function main() {
-  const { command, options, positional } = parseArgs();
+  const { command, options, positional } = parseArgs(process.argv.slice(2));
 
-  if (!command || command === "--help" || command === "-h") {
-    console.log(USAGE);
-    process.exit(0);
+  if (!command || command === "--help" || command === "-h" || command === "help") {
+    process.stdout.write(USAGE);
+    return 0;
   }
-
   if (command === "--version" || command === "-v") {
-    console.log("1.0.0");
-    process.exit(0);
+    process.stdout.write(`${VERSION}\n`);
+    return 0;
+  }
+  if (command === "init") {
+    const path = ensureDefaultConfig();
+    process.stdout.write(`Config at ${path}\n`);
+    return 0;
   }
 
-  if (command === "init") {
-    ensureDefaultConfig();
-    process.exit(0);
-  }
+  const config = loadConfig(options.config);
 
   if (command === "config") {
-    const config = loadConfig(options.config);
-    console.log("Current configuration:");
-    console.log(JSON.stringify({ ...config, apiKey: config.apiKey ? "***REDACTED***" : undefined }, null, 2));
-    process.exit(0);
+    process.stdout.write(`${JSON.stringify(redactConfig(config), null, 2)}\n`);
+    return 0;
   }
 
-  // Validate we have an API key before proceeding
-  const config = mergeConfig({});
   try {
     validateConfig(config);
   } catch (err) {
-    console.error(err instanceof Error ? err.message : "Configuration error");
-    process.exit(1);
+    process.stderr.write(`${err.message}\n`);
+    return 1;
   }
 
   const client = new MiniMaxMcpClient(config);
+  const ctrl = new AbortController();
+  const onSig = () => ctrl.abort();
+  process.once("SIGINT", onSig);
+  process.once("SIGTERM", onSig);
 
   try {
-    if (command === "search") {
-      const query = positional[0] || options.query;
-      if (!query) {
-        console.error("Error: Search query required");
-        console.log("\nUsage: pi-minimax-mcp search <query> [--num-results N]");
-        process.exit(1);
+    if (command === "tools") {
+      const tools = await client.listTools();
+      for (const t of tools) {
+        process.stdout.write(`${t.name}\t${t.description ?? ""}\n`);
       }
-
-      console.log(`Searching: "${query}"...\n`);
-
-      const result = await client.webSearch({
-        query,
-        numResults: parseInt(options.numresults || options.numResults, 10) || undefined,
-        recencyDays: parseInt(options.recencydays || options.recencyDays, 10) || undefined,
-      });
-
-      const formatted = formatToolOutput(result, {
-        maxBytes: config.maxBytes,
-        maxLines: config.maxLines,
-      });
-
-      console.log(formatted.text);
-
-      if (formatted.details.truncated && formatted.details.tempFile) {
-        console.log(`\n[Full output saved to: ${formatted.details.tempFile}]`);
-      }
-    } else if (command === "understand" || command === "image") {
-      const imagePath = positional[0] || options.image || options.path;
-      if (!imagePath) {
-        console.error("Error: Image path required");
-        console.log("\nUsage: pi-minimax-mcp understand <image-path> [--prompt \"question\"]");
-        process.exit(1);
-      }
-
-      console.log(`Analyzing: ${imagePath}...\n`);
-
-      const result = await client.understandImage({
-        imagePath,
-        prompt: options.prompt,
-      });
-
-      const formatted = formatToolOutput(result, {
-        maxBytes: config.maxBytes,
-        maxLines: config.maxLines,
-      });
-
-      console.log(formatted.text);
-
-      if (formatted.details.truncated && formatted.details.tempFile) {
-        console.log(`\n[Full output saved to: ${formatted.details.tempFile}]`);
-      }
-    } else {
-      console.error(`Unknown command: ${command}`);
-      console.log(USAGE);
-      process.exit(1);
+      return 0;
     }
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exit(1);
+
+    if (command === "search") {
+      const query = positional[0];
+      if (!query) {
+        process.stderr.write("Error: search query required\n");
+        return 1;
+      }
+      const result = await client.webSearch(
+        {
+          query,
+          numResults: intOpt(options, "numresults"),
+          recencyDays: intOpt(options, "recencydays"),
+        },
+        ctrl.signal,
+      );
+      const out = formatToolOutput(result, { maxBytes: config.maxBytes, maxLines: config.maxLines });
+      process.stdout.write(`${out.text}\n`);
+      if (out.details.tempFile) process.stderr.write(`[full output: ${out.details.tempFile}]\n`);
+      return result.isError ? 2 : 0;
+    }
+
+    if (command === "understand" || command === "image") {
+      const imagePath = positional[0];
+      if (!imagePath) {
+        process.stderr.write("Error: image path required\n");
+        return 1;
+      }
+      const result = await client.understandImage(
+        { imagePath, prompt: typeof options.prompt === "string" ? options.prompt : undefined },
+        ctrl.signal,
+      );
+      const out = formatToolOutput(result, { maxBytes: config.maxBytes, maxLines: config.maxLines });
+      process.stdout.write(`${out.text}\n`);
+      if (out.details.tempFile) process.stderr.write(`[full output: ${out.details.tempFile}]\n`);
+      return result.isError ? 2 : 0;
+    }
+
+    process.stderr.write(`Unknown command: ${command}\n${USAGE}`);
+    return 1;
+  } catch (err) {
+    process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+    return 1;
   } finally {
-    client.disconnect();
+    process.removeListener("SIGINT", onSig);
+    process.removeListener("SIGTERM", onSig);
+    await client.shutdown();
   }
 }
 
-main();
+main().then((code) => process.exit(code ?? 0));

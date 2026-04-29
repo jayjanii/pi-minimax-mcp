@@ -1,27 +1,29 @@
-/**
- * pi-minimax-mcp
- *
- * MiniMax MCP integration for Pi coding agent
- * Provides web search and image understanding capabilities
- *
- * @example
- * // As Pi extension
- * import minimaxMcp from "@ameno/pi-minimax-mcp/extensions";
- *
- * // As library
- * import { MiniMaxMcpClient } from "@ameno/pi-minimax-mcp";
- * const client = new MiniMaxMcpClient({ apiKey: "..." });
- * const results = await client.webSearch({ query: "..." });
- */
-
 export { MiniMaxMcpClient } from "./client.js";
-export { loadConfig, mergeConfig, validateConfig, ensureDefaultConfig } from "./config.js";
-export { formatToolOutput, formatBytes, redactSensitiveData, truncateHead } from "./utils.js";
+export {
+  ensureDefaultConfig,
+  loadConfig,
+  mergeConfig,
+  redactConfig,
+  validateConfig,
+} from "./config.js";
+export {
+  extractText,
+  formatBytes,
+  formatToolOutput,
+  truncateTail,
+  writeTempFile,
+} from "./utils.js";
 export type {
+  FormatOptions,
+  FormattedOutput,
+} from "./utils.js";
+export type {
+  JsonRpcNotification,
   JsonRpcRequest,
   JsonRpcResponse,
+  McpTool,
   McpToolResult,
   MiniMaxMcpConfig,
-  WebSearchParams,
   UnderstandImageParams,
+  WebSearchParams,
 } from "./types.js";

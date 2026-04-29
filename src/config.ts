@@ -1,100 +1,97 @@
-/**
- * MiniMax MCP Configuration
- * 
- * Handles configuration loading from files and environment variables
- */
-
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { DEFAULT_CONFIG, type MiniMaxMcpConfig } from "./types.js";
 
-const CONFIG_PATHS = [
-  join(process.cwd(), ".pi", "extensions", "minimax-mcp.json"),
-  join(homedir(), ".pi", "agent", "extensions", "minimax-mcp.json"),
-];
+const PROJECT_CONFIG = () => join(process.cwd(), ".pi", "extensions", "minimax-mcp.json");
+const GLOBAL_CONFIG = () => join(homedir(), ".pi", "agent", "extensions", "minimax-mcp.json");
 
-export function resolveConfigPath(customPath?: string): string | null {
-  if (customPath) {
-    return customPath.startsWith("~")
-      ? join(homedir(), customPath.slice(1))
-      : customPath;
-  }
-  return null;
+function expand(path: string): string {
+  return path.startsWith("~") ? join(homedir(), path.slice(1)) : path;
 }
 
-export function loadConfig(customPath?: string): MiniMaxMcpConfig {
-  const paths = customPath 
-    ? [resolveConfigPath(customPath)!]
-    : CONFIG_PATHS;
+function readJson(path: string): Partial<MiniMaxMcpConfig> | null {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, "utf-8")) as Partial<MiniMaxMcpConfig>;
+  } catch (err) {
+    process.stderr.write(`[pi-minimax-mcp] failed to parse ${path}: ${(err as Error).message}\n`);
+    return null;
+  }
+}
 
-  for (const path of paths) {
-    if (existsSync(path)) {
-      try {
-        const raw = readFileSync(path, "utf-8");
-        const parsed = JSON.parse(raw);
-        return mergeConfig(parsed);
-      } catch (error) {
-        console.warn(`[pi-minimax-mcp] Failed to load config from ${path}:`, error);
-      }
+function envInt(name: string): number | undefined {
+  const raw = process.env[name];
+  if (!raw) return undefined;
+  const n = Number.parseInt(raw, 10);
+  return Number.isFinite(n) ? n : undefined;
+}
+
+/**
+ * Resolve config from (in order of precedence): explicit overrides, env vars,
+ * project config file, global config file, built-in defaults.
+ */
+export function loadConfig(customPath?: string, overrides: Partial<MiniMaxMcpConfig> = {}): MiniMaxMcpConfig {
+  const fileConfig: Partial<MiniMaxMcpConfig> =
+    (customPath ? readJson(expand(customPath)) : null) ??
+    readJson(PROJECT_CONFIG()) ??
+    readJson(GLOBAL_CONFIG()) ??
+    {};
+
+  const env: Partial<MiniMaxMcpConfig> = {
+    apiKey: process.env.MINIMAX_API_KEY,
+    apiHost: process.env.MINIMAX_API_HOST,
+    basePath: process.env.MINIMAX_MCP_BASE_PATH,
+    resourceMode: process.env.MINIMAX_API_RESOURCE_MODE as "url" | "local" | undefined,
+    timeoutMs: envInt("MINIMAX_MCP_TIMEOUT_MS"),
+    startupTimeoutMs: envInt("MINIMAX_MCP_STARTUP_TIMEOUT_MS"),
+    idleShutdownMs: envInt("MINIMAX_MCP_IDLE_SHUTDOWN_MS"),
+    maxBytes: envInt("MINIMAX_MCP_MAX_BYTES"),
+    maxLines: envInt("MINIMAX_MCP_MAX_LINES"),
+  };
+
+  return mergeConfig(fileConfig, env, overrides);
+}
+
+/** Right-most wins; `undefined` is ignored at every layer. */
+export function mergeConfig(...layers: Array<Partial<MiniMaxMcpConfig> | undefined>): MiniMaxMcpConfig {
+  const out: MiniMaxMcpConfig = { ...DEFAULT_CONFIG };
+  for (const layer of layers) {
+    if (!layer) continue;
+    for (const [k, v] of Object.entries(layer)) {
+      if (v !== undefined && v !== null) (out as Record<string, unknown>)[k] = v;
     }
   }
-
-  return mergeConfig({});
-}
-
-export function mergeConfig(overrides: Partial<MiniMaxMcpConfig>): MiniMaxMcpConfig {
-  const parseEnvInt = (val: string | undefined, fallback: number): number => {
-    if (!val) return fallback;
-    const parsed = parseInt(val, 10);
-    return Number.isNaN(parsed) ? fallback : parsed;
-  };
-
-  return {
-    apiKey: overrides.apiKey ?? process.env.MINIMAX_API_KEY ?? DEFAULT_CONFIG.apiKey,
-    apiHost: overrides.apiHost ?? process.env.MINIMAX_API_HOST ?? DEFAULT_CONFIG.apiHost,
-    basePath: overrides.basePath ?? process.env.MINIMAX_MCP_BASE_PATH ?? DEFAULT_CONFIG.basePath,
-    resourceMode: (overrides.resourceMode ?? process.env.MINIMAX_API_RESOURCE_MODE ?? DEFAULT_CONFIG.resourceMode) as "url" | "local",
-    timeoutMs: overrides.timeoutMs ?? parseEnvInt(process.env.MINIMAX_MCP_TIMEOUT_MS, DEFAULT_CONFIG.timeoutMs!),
-    maxBytes: overrides.maxBytes ?? parseEnvInt(process.env.MINIMAX_MCP_MAX_BYTES, DEFAULT_CONFIG.maxBytes!),
-    maxLines: overrides.maxLines ?? parseEnvInt(process.env.MINIMAX_MCP_MAX_LINES, DEFAULT_CONFIG.maxLines!),
-  };
-}
-
-export function ensureDefaultConfig(): void {
-  const globalPath = CONFIG_PATHS[1];
-  if (existsSync(globalPath)) return;
-
-  try {
-    mkdirSync(dirname(globalPath), { recursive: true });
-    writeFileSync(
-      globalPath,
-      JSON.stringify(
-        {
-          apiKey: null,
-          apiHost: "https://api.minimax.io",
-          basePath: null,
-          resourceMode: "url",
-          timeoutMs: 60000,
-          maxBytes: 51200,
-          maxLines: 2000,
-        },
-        null,
-        2
-      ) + "\n",
-      "utf-8"
-    );
-    console.log(`[pi-minimax-mcp] Created default config at ${globalPath}`);
-  } catch (error) {
-    console.warn(`[pi-minimax-mcp] Failed to create default config:`, error);
-  }
+  return out;
 }
 
 export function validateConfig(config: MiniMaxMcpConfig): void {
   if (!config.apiKey) {
     throw new Error(
-      "MiniMax API key is required. Set MINIMAX_API_KEY environment variable or add to config file.\n" +
-      "Get your key at: https://platform.minimax.io/subscribe/coding-plan"
+      "MiniMax API key is required. Set MINIMAX_API_KEY or add 'apiKey' to your config file. " +
+        "Get one at https://platform.minimax.io/subscribe/coding-plan",
     );
   }
+}
+
+/** Write a default config file if none exists. Only call from explicit `init` flows. */
+export function ensureDefaultConfig(): string {
+  const path = GLOBAL_CONFIG();
+  if (existsSync(path)) return path;
+  mkdirSync(dirname(path), { recursive: true });
+  const seed = {
+    apiKey: null,
+    apiHost: DEFAULT_CONFIG.apiHost,
+    basePath: null,
+    resourceMode: DEFAULT_CONFIG.resourceMode,
+    timeoutMs: DEFAULT_CONFIG.timeoutMs,
+    maxBytes: DEFAULT_CONFIG.maxBytes,
+    maxLines: DEFAULT_CONFIG.maxLines,
+  };
+  writeFileSync(path, `${JSON.stringify(seed, null, 2)}\n`, "utf-8");
+  return path;
+}
+
+export function redactConfig(config: MiniMaxMcpConfig): MiniMaxMcpConfig {
+  return { ...config, apiKey: config.apiKey ? "***REDACTED***" : undefined };
 }

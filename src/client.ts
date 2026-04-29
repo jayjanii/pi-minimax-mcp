@@ -1,16 +1,11 @@
-/**
- * MiniMax MCP Client
- *
- * Manages the MCP connection to MiniMax via stdio (uvx minimax-coding-plan-mcp)
- */
-
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import { createInterface, type Interface as ReadlineInterface } from "node:readline";
+import { DEFAULT_CONFIG } from "./types.js";
 import type {
+  JsonRpcNotification,
   JsonRpcRequest,
   JsonRpcResponse,
+  McpTool,
   McpToolResult,
   MiniMaxMcpConfig,
   UnderstandImageParams,
@@ -20,214 +15,297 @@ import type {
 interface PendingRequest {
   resolve: (value: JsonRpcResponse) => void;
   reject: (reason: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: NodeJS.Timeout;
+  abortHandler?: () => void;
+  signal?: AbortSignal;
 }
 
+const PROTOCOL_VERSION = "2024-11-05";
+const CLIENT_INFO = { name: "pi-minimax-mcp", version: "2.0.0" };
+
+/**
+ * Persistent stdio MCP client for the MiniMax coding-plan MCP server.
+ *
+ * One subprocess is spawned and reused across calls. An idle timer reaps it;
+ * the next call lazily restarts. Aborts cancel in-flight requests immediately.
+ */
 export class MiniMaxMcpClient {
-  private process: ChildProcess | null = null;
+  private proc: ChildProcessWithoutNullStreams | null = null;
+  private rl: ReadlineInterface | null = null;
   private requestId = 0;
-  private pendingRequests = new Map<string | number, PendingRequest>();
-  private buffer = "";
-  private initialized = false;
-  private initPromise: Promise<void> | null = null;
+  private pending = new Map<number, PendingRequest>();
+  private connecting: Promise<void> | null = null;
+  private toolsCache: Map<string, McpTool> | null = null;
+  private idleTimer: NodeJS.Timeout | null = null;
+  private readonly cfg: Required<Omit<MiniMaxMcpConfig, "apiKey" | "basePath">> & {
+    apiKey?: string;
+    basePath?: string;
+  };
 
-  constructor(private readonly config: MiniMaxMcpConfig) {}
-
-  async connect(): Promise<void> {
-    if (this.initialized) return;
-    if (this.initPromise) return this.initPromise;
-
-    this.initPromise = this.doConnect();
-    return this.initPromise;
+  constructor(config: MiniMaxMcpConfig) {
+    this.cfg = { ...DEFAULT_CONFIG, ...config };
   }
 
-  private async doConnect(): Promise<void> {
-    const env = {
-      ...process.env,
-      MINIMAX_API_KEY: this.config.apiKey!,
-      MINIMAX_API_HOST: this.config.apiHost,
-      ...(this.config.basePath && { MINIMAX_MCP_BASE_PATH: this.config.basePath }),
-      ...(this.config.resourceMode && { MINIMAX_API_RESOURCE_MODE: this.config.resourceMode }),
-    };
+  async listTools(): Promise<McpTool[]> {
+    await this.ensureConnected();
+    if (this.toolsCache) return [...this.toolsCache.values()];
+    const res = await this.request("tools/list", {});
+    if (res.error) throw new Error(`tools/list failed: ${res.error.message}`);
+    const tools = ((res.result as { tools?: McpTool[] } | undefined)?.tools ?? []) as McpTool[];
+    this.toolsCache = new Map(tools.map((t) => [t.name, t]));
+    return tools;
+  }
 
-    this.process = spawn("uvx", ["minimax-coding-plan-mcp", "-y"], {
+  async callTool(
+    name: string,
+    args: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<McpToolResult> {
+    await this.ensureConnected();
+    const res = await this.request("tools/call", { name, arguments: args }, signal);
+    if (res.error) throw new Error(`MCP tool '${name}' failed: ${res.error.message}`);
+    return (res.result as McpToolResult) ?? { content: [] };
+  }
+
+  webSearch(params: WebSearchParams, signal?: AbortSignal): Promise<McpToolResult> {
+    const args: Record<string, unknown> = { query: params.query };
+    if (params.numResults != null) args.num_results = params.numResults;
+    if (params.recencyDays != null) args.recency_days = params.recencyDays;
+    return this.callTool("web_search", args, signal);
+  }
+
+  understandImage(params: UnderstandImageParams, signal?: AbortSignal): Promise<McpToolResult> {
+    return this.callTool(
+      "understand_image",
+      {
+        image_source: params.imagePath,
+        prompt: params.prompt ?? "Describe this image in detail",
+      },
+      signal,
+    );
+  }
+
+  /** Graceful shutdown. Resolves once the subprocess has exited. */
+  async shutdown(): Promise<void> {
+    this.clearIdleTimer();
+    const proc = this.proc;
+    if (!proc) return;
+    this.failPending(new Error("Client shutting down"));
+    return new Promise<void>((resolve) => {
+      proc.once("exit", () => resolve());
+      try {
+        proc.stdin.end();
+      } catch {
+        // ignore
+      }
+      proc.kill("SIGTERM");
+      const force = setTimeout(() => {
+        if (proc.exitCode == null && proc.signalCode == null) {
+          try {
+            proc.kill("SIGKILL");
+          } catch {
+            // ignore
+          }
+        }
+      }, 2_000);
+      force.unref();
+    });
+  }
+
+  /** Synchronous fire-and-forget shutdown; safe inside `process.on('exit')`. */
+  disconnect(): void {
+    this.clearIdleTimer();
+    this.failPending(new Error("Client disconnected"));
+    if (this.proc) {
+      try {
+        this.proc.kill("SIGTERM");
+      } catch {
+        // ignore
+      }
+    }
+    this.teardown();
+  }
+
+  private async ensureConnected(): Promise<void> {
+    this.touch();
+    if (this.proc && !this.proc.killed && this.proc.exitCode == null) return;
+    if (this.connecting) return this.connecting;
+    this.connecting = this.connect().finally(() => {
+      this.connecting = null;
+    });
+    return this.connecting;
+  }
+
+  private async connect(): Promise<void> {
+    if (!this.cfg.apiKey) {
+      throw new Error(
+        "MiniMax API key is required. Set MINIMAX_API_KEY or configure 'apiKey'. " +
+          "Get one at https://platform.minimax.io/subscribe/coding-plan",
+      );
+    }
+
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      MINIMAX_API_KEY: this.cfg.apiKey,
+      MINIMAX_API_HOST: this.cfg.apiHost,
+      MINIMAX_API_RESOURCE_MODE: this.cfg.resourceMode,
+    };
+    if (this.cfg.basePath) env.MINIMAX_MCP_BASE_PATH = this.cfg.basePath;
+
+    const proc = spawn("uvx", ["minimax-coding-plan-mcp", "-y"], {
       env,
       stdio: ["pipe", "pipe", "pipe"],
+    }) as ChildProcessWithoutNullStreams;
+
+    this.proc = proc;
+    this.toolsCache = null;
+
+    proc.on("error", (err) => this.failPending(err));
+    proc.on("exit", () => {
+      this.failPending(new Error("MCP subprocess exited"));
+      this.teardown();
+    });
+    proc.stderr.setEncoding("utf8");
+    proc.stderr.on("data", (chunk: string) => {
+      process.stderr.write(`[pi-minimax-mcp] ${chunk}`);
     });
 
-    this.process.stdout?.on("data", (data: Buffer) => this.handleData(data));
-    this.process.stderr?.on("data", (data: Buffer) => {
-      const msg = data.toString();
-      if (msg.includes("error") || msg.includes("Error")) {
-        console.error(`[pi-minimax-mcp] ${msg.trim()}`);
-      }
-    });
+    this.rl = createInterface({ input: proc.stdout });
+    this.rl.on("line", (line) => this.handleLine(line));
 
-    this.process.on("error", (err) => this.handleProcessError(err));
-    this.process.on("exit", (code) => {
-      if (code !== 0 && code !== null) {
-        console.error(`[pi-minimax-mcp] Process exited with code ${code}`);
-      }
-      this.cleanup();
-    });
-
-    // Wait for process to be ready
-    await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("MCP process startup timeout")), 10000);
-      const checkReady = setInterval(() => {
-        if (this.process?.pid) {
-          clearTimeout(timeout);
-          clearInterval(checkReady);
-          resolve();
-        }
-      }, 100);
-    });
-
-    // Initialize MCP protocol
     await this.initialize();
-    this.initialized = true;
   }
 
   private async initialize(): Promise<void> {
-    const response = await this.sendRequest("initialize", {
-      protocolVersion: "2024-11-05",
-      capabilities: {},
-      clientInfo: {
-        name: "pi-minimax-mcp",
-        version: "1.0.0",
-      },
+    let timer: NodeJS.Timeout | undefined;
+    const startupTimeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error(`MCP startup timeout after ${this.cfg.startupTimeoutMs}ms`)),
+        this.cfg.startupTimeoutMs,
+      );
+      timer.unref();
     });
-
-    if (response.error) {
-      throw new Error(`MCP initialize failed: ${response.error.message}`);
-    }
-
-    // Send initialized notification
-    await this.sendNotification("notifications/initialized", {});
-  }
-
-  private handleData(data: Buffer): void {
-    this.buffer += data.toString();
-
-    let newlineIndex: number;
-    while ((newlineIndex = this.buffer.indexOf("\n")) !== -1) {
-      const line = this.buffer.slice(0, newlineIndex).trim();
-      this.buffer = this.buffer.slice(newlineIndex + 1);
-
-      if (!line) continue;
-
-      try {
-        const message = JSON.parse(line) as JsonRpcResponse;
-        this.handleMessage(message);
-      } catch {
-        // Not JSON, might be logging
-        console.log(`[pi-minimax-mcp] ${line}`);
-      }
+    try {
+      const res = await Promise.race([
+        this.request("initialize", {
+          protocolVersion: PROTOCOL_VERSION,
+          capabilities: {},
+          clientInfo: CLIENT_INFO,
+        }),
+        startupTimeout,
+      ]);
+      if (res.error) throw new Error(`MCP initialize failed: ${res.error.message}`);
+      this.notify("notifications/initialized", {});
+    } finally {
+      if (timer) clearTimeout(timer);
     }
   }
 
-  private handleMessage(message: JsonRpcResponse): void {
-    if (message.id != null && this.pendingRequests.has(message.id)) {
-      const request = this.pendingRequests.get(message.id)!;
-      this.pendingRequests.delete(message.id);
-      clearTimeout(request.timer);
-      request.resolve(message);
+  private teardown(): void {
+    if (this.rl) {
+      this.rl.close();
+      this.rl = null;
     }
+    this.proc = null;
+    this.toolsCache = null;
+    this.clearIdleTimer();
   }
 
-  private handleProcessError(err: Error): void {
-    for (const [, request] of this.pendingRequests) {
-      request.reject(err);
-    }
-    this.pendingRequests.clear();
-    this.cleanup();
-  }
-
-  private cleanup(): void {
-    this.initialized = false;
-    this.initPromise = null;
-    if (this.process) {
-      this.process.kill();
-      this.process = null;
-    }
-  }
-
-  private async sendRequest(method: string, params: Record<string, unknown>): Promise<JsonRpcResponse> {
-    if (!this.process?.stdin) {
-      throw new Error("MCP process not connected");
-    }
+  private request(
+    method: string,
+    params: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<JsonRpcResponse> {
+    const proc = this.proc;
+    if (!proc?.stdin.writable) return Promise.reject(new Error("MCP process not connected"));
+    if (signal?.aborted) return Promise.reject(new Error("Aborted"));
 
     const id = ++this.requestId;
-    const request: JsonRpcRequest = {
-      jsonrpc: "2.0",
-      id,
-      method,
-      params,
-    };
+    const payload: JsonRpcRequest = { jsonrpc: "2.0", id, method, params };
 
-    return new Promise((resolve, reject) => {
+    return new Promise<JsonRpcResponse>((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pendingRequests.delete(id);
-        reject(new Error(`MCP request timeout after ${this.config.timeoutMs}ms`));
-      }, this.config.timeoutMs);
+        this.pending.delete(id);
+        reject(new Error(`MCP request '${method}' timed out after ${this.cfg.timeoutMs}ms`));
+      }, this.cfg.timeoutMs);
+      timer.unref();
 
-      this.pendingRequests.set(id, { resolve, reject, timer });
+      const entry: PendingRequest = { resolve, reject, timer, signal };
+      if (signal) {
+        const onAbort = () => {
+          this.pending.delete(id);
+          clearTimeout(timer);
+          reject(new Error("Aborted"));
+        };
+        entry.abortHandler = onAbort;
+        signal.addEventListener("abort", onAbort, { once: true });
+      }
+      this.pending.set(id, entry);
+      this.touch();
 
       try {
-        this.process!.stdin!.write(JSON.stringify(request) + "\n");
+        proc.stdin.write(`${JSON.stringify(payload)}\n`);
       } catch (err) {
-        this.pendingRequests.delete(id);
+        this.pending.delete(id);
         clearTimeout(timer);
-        reject(err);
+        if (entry.abortHandler && signal) signal.removeEventListener("abort", entry.abortHandler);
+        reject(err as Error);
       }
     });
   }
 
-  private async sendNotification(method: string, params: Record<string, unknown>): Promise<void> {
-    if (!this.process?.stdin) {
-      throw new Error("MCP process not connected");
+  private notify(method: string, params: Record<string, unknown>): void {
+    const proc = this.proc;
+    if (!proc?.stdin.writable) return;
+    const payload: JsonRpcNotification = { jsonrpc: "2.0", method, params };
+    proc.stdin.write(`${JSON.stringify(payload)}\n`);
+  }
+
+  private handleLine(line: string): void {
+    const trimmed = line.trim();
+    if (!trimmed) return;
+    let msg: JsonRpcResponse;
+    try {
+      msg = JSON.parse(trimmed) as JsonRpcResponse;
+    } catch {
+      process.stderr.write(`[pi-minimax-mcp] non-JSON stdout: ${trimmed}\n`);
+      return;
     }
-
-    const notification = {
-      jsonrpc: "2.0",
-      method,
-      params,
-    };
-
-    this.process.stdin.write(JSON.stringify(notification) + "\n");
-  }
-
-  async callTool(name: string, args: Record<string, unknown>): Promise<McpToolResult> {
-    await this.connect();
-
-    const response = await this.sendRequest("tools/call", {
-      name,
-      arguments: args,
-    });
-
-    if (response.error) {
-      throw new Error(`Tool call failed: ${response.error.message}`);
+    if (msg.id == null) return;
+    const entry = this.pending.get(msg.id as number);
+    if (!entry) return;
+    this.pending.delete(msg.id as number);
+    clearTimeout(entry.timer);
+    if (entry.abortHandler && entry.signal) {
+      entry.signal.removeEventListener("abort", entry.abortHandler);
     }
-
-    return (response.result as McpToolResult) ?? { content: [] };
+    entry.resolve(msg);
   }
 
-  async webSearch(params: WebSearchParams): Promise<McpToolResult> {
-    return this.callTool("web_search", {
-      query: params.query,
-      ...(params.numResults && { num_results: params.numResults }),
-      ...(params.recencyDays && { recency_days: params.recencyDays }),
-    });
+  private failPending(err: Error): void {
+    for (const entry of this.pending.values()) {
+      clearTimeout(entry.timer);
+      if (entry.abortHandler && entry.signal) {
+        entry.signal.removeEventListener("abort", entry.abortHandler);
+      }
+      entry.reject(err);
+    }
+    this.pending.clear();
   }
 
-  async understandImage(params: UnderstandImageParams): Promise<McpToolResult> {
-    return this.callTool("understand_image", {
-      image_source: params.imagePath,
-      prompt: params.prompt || "Describe this image in detail",
-    });
+  private touch(): void {
+    if (!this.cfg.idleShutdownMs) return;
+    this.clearIdleTimer();
+    this.idleTimer = setTimeout(() => {
+      if (this.pending.size === 0) void this.shutdown();
+    }, this.cfg.idleShutdownMs);
+    this.idleTimer.unref();
   }
 
-  disconnect(): void {
-    this.cleanup();
+  private clearIdleTimer(): void {
+    if (this.idleTimer) {
+      clearTimeout(this.idleTimer);
+      this.idleTimer = null;
+    }
   }
 }

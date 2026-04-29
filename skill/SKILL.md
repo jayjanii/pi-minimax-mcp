@@ -1,7 +1,7 @@
 ---
 name: minimax-mcp
 description: MiniMax Web Search & Image Understanding MCP for Pi
-author: ameno
+author: Jay Jani
 tags: [search, image, mcp, minimax]
 ---
 

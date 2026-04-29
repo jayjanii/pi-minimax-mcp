@@ -34,7 +34,7 @@ Complete Pi-compatible MiniMax MCP package for web search and image understandin
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Verify
-which uvx  # Should show path like /Users/ameno/.local/bin/uvx
+which uvx  # Should show path like /Users/you/.local/bin/uvx
 ```
 
 ### Setup API Key
@@ -55,7 +55,7 @@ cd ~/dev/pi-minimax-mcp
 pnpm link --global
 
 # Or install from npm (once published)
-pnpm add -g ameno-/pi-minimax-mcp
+npm install -g @jayjanii/pi-minimax-mcp
 ```
 
 ## 🔧 Usage
@@ -91,7 +91,7 @@ Once installed in Pi, tools are automatically available:
 ### Programmatic
 
 ```typescript
-import { MiniMaxMcpClient } from "ameno-/pi-minimax-mcp";
+import { MiniMaxMcpClient } from "@jayjanii/pi-minimax-mcp";
 
 const client = new MiniMaxMcpClient({
   apiKey: process.env.MINIMAX_API_KEY!,
@@ -254,7 +254,7 @@ pi-minimax-mcp init
 which uvx
 
 # Try absolute path
-export MINIMAX_MCP_UV_PATH="/Users/ameno/.local/bin/uvx"
+export MINIMAX_MCP_UV_PATH="$HOME/.local/bin/uvx"
 ```
 
 ---

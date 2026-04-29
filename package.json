@@ -1,6 +1,6 @@
 {
-  "name": "@ameno/pi-minimax-mcp",
-  "version": "1.0.1",
+  "name": "@jayjanii/pi-minimax-mcp",
+  "version": "1.0.0",
   "description": "MiniMax MCP tools for pi - Web search and image understanding via MiniMax's Model Context Protocol",
   "keywords": [
     "pi",
@@ -32,7 +32,7 @@
     "LICENSE"
   ],
   "bin": {
-    "pi-minimax-mcp": "./bin/pi-minimax-mcp.js"
+    "pi-minimax-mcp": "bin/pi-minimax-mcp.js"
   },
   "pi": {
     "extensions": [
@@ -60,8 +60,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ameno-/pi-minimax-mcp.git"
+    "url": "git+https://github.com/jayjanii/pi-minimax-mcp.git"
   },
-  "author": "ameno",
+  "homepage": "https://github.com/jayjanii/pi-minimax-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/jayjanii/pi-minimax-mcp/issues"
+  },
+  "author": "Jay Jani",
   "license": "MIT"
 }
