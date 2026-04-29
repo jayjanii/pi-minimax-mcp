@@ -10,6 +10,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { Component } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { MiniMaxMcpClient } from "../dist/client.js";
 import { loadConfig, mergeConfig, redactConfig, validateConfig } from "../dist/config.js";
@@ -79,6 +80,8 @@ export default function minimaxMcp(pi: ExtensionAPI) {
     process.exit(143);
   });
 
+  const silent: Component = { render: () => [] };
+
   const errorResult = (message: string) => ({
     content: [{ type: "text" as const, text: message }],
     isError: true,
@@ -130,7 +133,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "web_search",
-    label: "MiniMax Web Search",
+    label: "Web MCP",
     description: "Real-time web search via MiniMax. Best for current information, news, docs, and facts.",
     parameters: Type.Object(
       {
@@ -140,6 +143,8 @@ export default function minimaxMcp(pi: ExtensionAPI) {
       },
       { additionalProperties: false },
     ),
+    renderCall: () => silent,
+    renderResult: () => silent,
     execute: (_id, params, signal, onUpdate, _ctx) =>
       runTool(
         "web_search",
@@ -158,7 +163,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "understand_image",
-    label: "MiniMax Image Understanding",
+    label: "Image MCP",
     description: "Analyze and describe image content via MiniMax. Best for screenshots, diagrams, and photos.",
     parameters: Type.Object(
       {
@@ -167,6 +172,8 @@ export default function minimaxMcp(pi: ExtensionAPI) {
       },
       { additionalProperties: false },
     ),
+    renderCall: () => silent,
+    renderResult: () => silent,
     execute: (_id, params, signal, onUpdate, _ctx) =>
       runTool(
         "understand_image",
