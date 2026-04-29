@@ -9,6 +9,8 @@
  * subsequent calls. An idle timer reaps it; the next call relaunches.
  */
 
+import { readFileSync } from "node:fs";
+import { extname } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { Component } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
@@ -81,6 +83,30 @@ export default function minimaxMcp(pi: ExtensionAPI) {
   });
 
   const silent: Component = { render: () => [] };
+
+  const IMAGE_EXTS: Record<string, string> = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+  };
+
+  pi.on("input", async (event) => {
+    const path = event.text.trim();
+    const mime = IMAGE_EXTS[extname(path).toLowerCase()];
+    if (!mime) return { action: "continue" as const };
+    try {
+      const data = readFileSync(path).toString("base64");
+      return {
+        action: "transform" as const,
+        text: "",
+        images: [{ type: "image" as const, data, mimeType: mime }],
+      };
+    } catch {
+      return { action: "continue" as const };
+    }
+  });
 
   const errorResult = (message: string) => ({
     content: [{ type: "text" as const, text: message }],
