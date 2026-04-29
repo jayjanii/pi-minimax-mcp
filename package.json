@@ -1,6 +1,6 @@
 {
   "name": "@jayjanii/pi-minimax-mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "MiniMax MCP tools for pi - Web search and image understanding via MiniMax's Model Context Protocol",
   "keywords": [
     "pi",
