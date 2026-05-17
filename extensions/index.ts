@@ -159,7 +159,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "web_search",
-    label: "Web MCP",
+    label: "MiniMax Web Search 🌐",
     description: "Real-time web search via MiniMax. Best for current information, news, docs, and facts.",
     parameters: Type.Object(
       {
@@ -189,7 +189,7 @@ export default function minimaxMcp(pi: ExtensionAPI) {
 
   pi.registerTool({
     name: "understand_image",
-    label: "Image MCP",
+    label: "MiniMax Image Analysis 🖼️",
     description: "Analyze and describe image content via MiniMax. Best for screenshots, diagrams, and photos.",
     parameters: Type.Object(
       {

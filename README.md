@@ -8,9 +8,21 @@ Web search and image understanding for [Pi](https://github.com/mariozechner/pi) 
 
 **2. Install uvx** (required to run the MiniMax MCP server):
 
+<details open>
+<summary>macOS / Linux</summary>
+
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+</details>
 
 **3. Install the extension:**
 
@@ -20,9 +32,25 @@ pi install npm:@jayjanii/pi-minimax-mcp
 
 **4. Set your API key:**
 
+<details open>
+<summary>macOS / Linux</summary>
+
 ```bash
 export MINIMAX_API_KEY="your-api-key"
 ```
+
+To persist across sessions, add to `~/.zshrc` or `~/.bashrc`.
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+$env:MINIMAX_API_KEY = "your-api-key"
+```
+
+To persist, add to your PowerShell profile or set via System > Environment Variables.
+</details>
 
 That's it. Start Pi and the `web_search` and `understand_image` tools are available automatically.
 
@@ -33,7 +61,7 @@ Search for the latest TypeScript release notes
 ```
 
 ```
-What does this screenshot show? ./error.png
+🖼️ understand ./error.png
 ```
 
 Dropping an image path (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) into the prompt attaches it automatically.
@@ -74,7 +102,19 @@ Priority order: **CLI flags > env vars > config file > defaults**
 
 ### Config file
 
-`~/.pi/agent/extensions/minimax-mcp.json` (global) or `.pi/extensions/minimax-mcp.json` (project):
+<details open>
+<summary>macOS / Linux</summary>
+
+Global: `~/.pi/agent/extensions/minimax-mcp.json`  
+Project: `.pi/extensions/minimax-mcp.json`
+</details>
+
+<details>
+<summary>Windows</summary>
+
+Global: `%USERPROFILE%\.pi\agent\extensions\minimax-mcp.json`  
+Project: `.pi\extensions\minimax-mcp.json`
+</details>
 
 ```json
 {
@@ -98,21 +138,52 @@ pi --minimax-api-key=<key> --minimax-api-host=<host> --minimax-mcp-config=<path>
 ## Troubleshooting
 
 **`uvx: command not found`**
+
+<details open>
+<summary>macOS / Linux</summary>
+
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
 # Restart your shell, then verify:
 which uvx
 ```
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+# Open a new terminal, then verify:
+where.exe uvx
+```
+</details>
 
 If uvx is installed but not on PATH, point directly to it:
+
+<details open>
+<summary>macOS / Linux</summary>
+
 ```bash
 export MINIMAX_MCP_UV_PATH="$HOME/.local/bin/uvx"
 ```
+</details>
+
+<details>
+<summary>Windows (PowerShell)</summary>
+
+```powershell
+$env:MINIMAX_MCP_UV_PATH = "$env:USERPROFILE\.local\bin\uvx.exe"
+```
+</details>
 
 **`MiniMax API key is required`**
 ```bash
-export MINIMAX_API_KEY="your-key"
-# or run: pi-minimax-mcp init  (then edit the generated file)
+# Or run: pi-minimax-mcp init  (then edit the generated file)
+export MINIMAX_API_KEY="your-key"   # macOS / Linux
+```
+```powershell
+$env:MINIMAX_API_KEY = "your-key"   # Windows
 ```
 
 ## Programmatic usage
