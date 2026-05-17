@@ -57,7 +57,4 @@ pi-minimax-mcp search "quantum computing latest breakthroughs"
 
 # Image understanding
 pi-minimax-mcp understand ./screenshot.png
-
-# Interactive mode
-pi-minimax-mcp interactive
 ```

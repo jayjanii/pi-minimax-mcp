@@ -152,7 +152,8 @@ export class MiniMaxMcpClient {
     };
     if (this.cfg.basePath) env.MINIMAX_MCP_BASE_PATH = this.cfg.basePath;
 
-    const proc = spawn("uvx", ["minimax-coding-plan-mcp", "-y"], {
+    const uvxBin = process.env.MINIMAX_MCP_UV_PATH ?? "uvx";
+    const proc = spawn(uvxBin, ["minimax-coding-plan-mcp", "-y"], {
       env,
       stdio: ["pipe", "pipe", "pipe"],
     }) as ChildProcessWithoutNullStreams;

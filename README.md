@@ -1,64 +1,85 @@
 # pi-minimax-mcp
 
-MiniMax MCP tools for [Pi](https://github.com/mariozechner/pi) - Web search and image understanding via MiniMax's Model Context Protocol.
+Web search and image understanding for [Pi](https://github.com/mariozechner/pi) via MiniMax MCP.
 
-[![Pi Extension](https://img.shields.io/badge/Pi-Extension-blue)](https://github.com/mariozechner/pi)
-[![MiniMax](https://img.shields.io/badge/MiniMax-MCP-green)](https://platform.minimax.io)
+## Quick Start
 
-## Features
+**1. Get a MiniMax API key** at [platform.minimax.io/subscribe/coding-plan](https://platform.minimax.io/subscribe/coding-plan)
 
-- 🔍 **Web Search** - Real-time web search for current information
-- 🖼️ **Image Understanding** - Analyze and describe image content
-- ⚡ **Pi Native** - Works as Pi extension or standalone CLI
-- 🔧 **Configurable** - Environment variables, config files, or CLI flags
+**2. Install uvx** (required to run the MiniMax MCP server):
 
-## Prerequisites
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
-1. **Get MiniMax API Key**
-   - Visit [MiniMax Coding Plan](https://platform.minimax.io/subscribe/coding-plan)
-   - Subscribe and get your API key
-
-2. **Install uvx**
-   ```bash
-   curl -LsSf https://astral.sh/uv/install.sh | sh
-   ```
-
-## Installation
-
-### As Pi Extension
+**3. Install the extension:**
 
 ```bash
 pi install npm:@jayjanii/pi-minimax-mcp
 ```
 
-### As Standalone CLI
+**4. Set your API key:**
 
 ```bash
-npm install -g @jayjanii/pi-minimax-mcp
-# or
-pnpm add -g @jayjanii/pi-minimax-mcp
+export MINIMAX_API_KEY="your-api-key"
+```
+
+That's it. Start Pi and the `web_search` and `understand_image` tools are available automatically.
+
+## Usage in Pi
+
+```
+Search for the latest TypeScript release notes
+```
+
+```
+What does this screenshot show? ./error.png
+```
+
+Dropping an image path (`.png`, `.jpg`, `.jpeg`, `.gif`, `.webp`) into the prompt attaches it automatically.
+
+## CLI
+
+```bash
+# Web search
+pi-minimax-mcp search "quantum computing breakthroughs"
+pi-minimax-mcp search "Rust async patterns" --num-results 10 --recency-days 30
+
+# Image analysis
+pi-minimax-mcp understand ./diagram.png
+pi-minimax-mcp understand ./chart.png --prompt "What trends does this show?"
+
+# Utilities
+pi-minimax-mcp config   # show active config (API key redacted)
+pi-minimax-mcp init     # create default config file
+pi-minimax-mcp tools    # list tools from the MiniMax MCP server
 ```
 
 ## Configuration
 
-### Environment Variables
+Priority order: **CLI flags > env vars > config file > defaults**
 
-```bash
-export MINIMAX_API_KEY="your-api-key"
-export MINIMAX_API_HOST="https://api.minimax.io"  # optional
-export MINIMAX_MCP_BASE_PATH="/tmp/minimax"        # optional
-export MINIMAX_API_RESOURCE_MODE="url"             # optional: url | local
-```
+### Environment variables
 
-### Config File
+| Variable | Required | Default |
+|----------|----------|---------|
+| `MINIMAX_API_KEY` | Yes | — |
+| `MINIMAX_API_HOST` | No | `https://api.minimax.io` |
+| `MINIMAX_MCP_BASE_PATH` | No | — |
+| `MINIMAX_API_RESOURCE_MODE` | No | `url` |
+| `MINIMAX_MCP_UV_PATH` | No | `uvx` |
+| `MINIMAX_MCP_TIMEOUT_MS` | No | `60000` |
+| `MINIMAX_MCP_MAX_BYTES` | No | `51200` |
+| `MINIMAX_MCP_MAX_LINES` | No | `2000` |
 
-Create `~/.pi/agent/extensions/minimax-mcp.json`:
+### Config file
+
+`~/.pi/agent/extensions/minimax-mcp.json` (global) or `.pi/extensions/minimax-mcp.json` (project):
 
 ```json
 {
   "apiKey": "your-api-key",
   "apiHost": "https://api.minimax.io",
-  "basePath": "/tmp/minimax-output",
   "resourceMode": "url",
   "timeoutMs": 60000,
   "maxBytes": 51200,
@@ -66,130 +87,47 @@ Create `~/.pi/agent/extensions/minimax-mcp.json`:
 }
 ```
 
-Or project-specific `.pi/extensions/minimax-mcp.json`.
+Run `pi-minimax-mcp init` to create this file automatically.
 
-## Usage
-
-### In Pi
-
-```
-Search the web for "latest React server components"
-```
-
-```
-What does this screenshot show? ./screenshot.png
-```
-
-### CLI
+### Pi flags
 
 ```bash
-# Web search
-pi-minimax-mcp search "quantum computing breakthroughs"
-pi-minimax-mcp search "Rust async patterns" --num-results 10
-
-# Image analysis
-pi-minimax-mcp understand ./error.png
-pi-minimax-mcp understand ./chart.png --prompt "What trends?"
-
-# Configuration
-pi-minimax-mcp config
-pi-minimax-mcp init
+pi --minimax-api-key=<key> --minimax-api-host=<host> --minimax-mcp-config=<path>
 ```
 
-### Programmatic
+## Troubleshooting
+
+**`uvx: command not found`**
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# Restart your shell, then verify:
+which uvx
+```
+
+If uvx is installed but not on PATH, point directly to it:
+```bash
+export MINIMAX_MCP_UV_PATH="$HOME/.local/bin/uvx"
+```
+
+**`MiniMax API key is required`**
+```bash
+export MINIMAX_API_KEY="your-key"
+# or run: pi-minimax-mcp init  (then edit the generated file)
+```
+
+## Programmatic usage
 
 ```typescript
 import { MiniMaxMcpClient } from "@jayjanii/pi-minimax-mcp";
 
-const client = new MiniMaxMcpClient({
-  apiKey: process.env.MINIMAX_API_KEY!,
-});
+const client = new MiniMaxMcpClient({ apiKey: process.env.MINIMAX_API_KEY! });
 
-// Web search
-const searchResults = await client.webSearch({
-  query: "TypeScript 5.5 features",
-  numResults: 5,
-});
-
-// Image understanding
-const imageAnalysis = await client.understandImage({
-  imagePath: "./diagram.png",
-  prompt: "Explain this architecture",
-});
+const search = await client.webSearch({ query: "TypeScript 5.5 features", numResults: 5 });
+const image  = await client.understandImage({ imagePath: "./diagram.png", prompt: "Explain this" });
 
 client.disconnect();
-```
-
-## Pi Extension Flags
-
-```bash
-pi --minimax-api-key=<key> --minimax-api-host=<host>
-```
-
-| Flag | Description |
-|------|-------------|
-| `--minimax-api-key` | Override API key |
-| `--minimax-api-host` | Override API host |
-| `--minimax-mcp-config` | Custom config file path |
-| `--minimax-mcp-max-bytes` | Max output bytes |
-| `--minimax-mcp-max-lines` | Max output lines |
-
-## Architecture
-
-```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│   Pi Agent      │────▶│  pi-minimax-mcp  │────▶│  uvx minimax-   │
-│   Extension     │◄────│   Extension      │◄────│  coding-plan-mcp│
-└─────────────────┘     └──────────────────┘     └─────────────────┘
-                                                        │
-                                                        ▼
-                                                   ┌─────────┐
-                                                   │ MiniMax │
-                                                   │  API    │
-                                                   └─────────┘
-```
-
-## Tools Reference
-
-### `web_search`
-
-Search the web for current information.
-
-**Parameters:**
-- `query` (string, required): Search query
-- `numResults` (number, optional): Results to return (1-10, default: 5)
-- `recencyDays` (number, optional): Limit to recent days
-
-### `understand_image`
-
-Analyze image content.
-
-**Parameters:**
-- `imagePath` (string, required): Path to image file
-- `prompt` (string, optional): Guiding question/prompt
-
-## Development
-
-```bash
-# Clone
-git clone https://github.com/jayjanii/pi-minimax-mcp.git
-cd pi-minimax-mcp
-
-# Install dependencies
-pnpm install
-
-# Build
-pnpm run build
-
-# Test
-pnpm test
 ```
 
 ## License
 
 MIT
-
-## Acknowledgments
-
-- Inspired by [@benvargas/pi-exa-mcp](https://github.com/ben-vargas/pi-packages)
-- Powered by [MiniMax](https://minimax.io)

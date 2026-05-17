@@ -8,8 +8,10 @@ export {
 } from "./config.js";
 export {
   extractText,
+  extractWebSearchText,
   formatBytes,
   formatToolOutput,
+  formatWebSearchOutput,
   truncateTail,
   writeTempFile,
 } from "./utils.js";
