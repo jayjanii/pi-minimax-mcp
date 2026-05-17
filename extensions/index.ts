@@ -11,8 +11,8 @@
 
 import { readFileSync } from "node:fs";
 import { extname } from "node:path";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import type { Component } from "@mariozechner/pi-tui";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { Component } from "@earendil-works/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { MiniMaxMcpClient } from "../dist/client.js";
 import { loadConfig, mergeConfig, redactConfig, validateConfig } from "../dist/config.js";
